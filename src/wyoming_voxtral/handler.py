@@ -125,7 +125,10 @@ class VoxtralEventHandler(AsyncEventHandler):
         for program in self._wyoming_info.tts:
             for voice in program.voices:
                 if not name or voice.name == name:
-                    return cast(VoxtralVoice, voice)
+                    assert isinstance(
+                        voice, VoxtralVoice
+                    ), f"Voice {voice.name!r} is not a VoxtralVoice instance"
+                    return voice
         return None
 
     def _is_tts_language_supported(self, language: str, voice: TtsVoice) -> bool:
@@ -210,19 +213,34 @@ class VoxtralEventHandler(AsyncEventHandler):
         current_chunk = ""
 
         for sentence in sentences:
-            potential_chunk = f"{current_chunk} {sentence}".strip() if current_chunk else sentence
-            if max_chars and len(potential_chunk) > max_chars and current_chunk:
-                if not min_words or self._meets_min_criteria(current_chunk, min_words):
-                    chunks.append(current_chunk.strip())
-                current_chunk = sentence
-            elif not max_chars and not min_words:
+            candidate = f"{current_chunk} {sentence}".strip() if current_chunk else sentence
+
+            if not max_chars and not min_words:
+                # No constraints: emit each sentence individually.
                 if current_chunk:
                     chunks.append(current_chunk.strip())
                 current_chunk = sentence
+            elif max_chars and len(candidate) > max_chars and current_chunk:
+                # Adding this sentence would exceed the character cap: flush current chunk
+                # and start a new one. min_words is relaxed here — when max_chars forces
+                # the split there is nowhere else for the accumulated text to go, so
+                # emitting a short chunk is preferable to silently discarding it.
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence
             else:
-                current_chunk = potential_chunk
+                current_chunk = candidate
+                # When only min_words is set: emit as soon as the threshold is reached
+                # so that large texts are split into multiple chunks rather than
+                # accumulating into a single request.
+                if (
+                    not max_chars
+                    and min_words
+                    and self._meets_min_criteria(current_chunk, min_words)
+                ):
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
 
-        if current_chunk and (not min_words or self._meets_min_criteria(current_chunk, min_words)):
+        if current_chunk:
             chunks.append(current_chunk.strip())
 
         return chunks or [text]
@@ -465,7 +483,13 @@ class VoxtralEventHandler(AsyncEventHandler):
         for task in tasks_to_cancel:
             task.cancel()
 
-        await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks_to_cancel, return_exceptions=True),
+                timeout=5.0,
+            )
+        except TimeoutError:
+            _LOGGER.warning("Timed out waiting for %d task(s) to cancel", len(tasks_to_cancel))
 
     async def _get_tts_audio_stream(
         self,
@@ -617,16 +641,16 @@ class VoxtralEventHandler(AsyncEventHandler):
 
     async def write_event(self, event: Event) -> None:
         """Add lightweight event logging around the base Wyoming writer."""
-        if self._last_event_type != event.type:
+        type_changed = self._last_event_type != event.type
+        if type_changed:
             self._last_event_type = event.type
             self._event_counter = 1
         else:
             self._event_counter += 1
 
-        if event.type == "audio-chunk":
-            if self._event_counter <= 2:
-                _LOGGER.debug("Outgoing event type %s", event.type)
-        else:
+        # Log all non-audio-chunk events; for audio-chunk, only log the first
+        # occurrence per run to avoid flooding the log during streaming.
+        if event.type != "audio-chunk" or self._event_counter == 1:
             _LOGGER.debug("Outgoing event type %s", event.type)
 
         await super().write_event(event)

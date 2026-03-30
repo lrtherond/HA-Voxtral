@@ -36,3 +36,12 @@ def test_pcm_f32le_to_s16le_converts_expected_values():
     audio = struct.pack("<fff", -1.0, 0.0, 1.0)
     converted = pcm_f32le_to_s16le(audio)
     assert converted == struct.pack("<hhh", -32768, 0, 32767)
+
+
+def test_pcm_f32le_to_s16le_clamps_and_silences_special_values():
+    import math
+
+    # 2.0 and -2.0 are clamped; nan and inf are silenced to 0.
+    audio = struct.pack("<ffff", 2.0, -2.0, math.nan, math.inf)
+    converted = pcm_f32le_to_s16le(audio)
+    assert converted == struct.pack("<hhhh", 32767, -32768, 0, 0)

@@ -10,10 +10,11 @@ import warnings
 from functools import partial
 from pathlib import Path
 
+import httpx
 from wyoming.server import AsyncServer
 
 from .catalog import create_info, create_tts_voices
-from .client import MistralTtsClient
+from .client import MistralApiError, MistralTtsClient
 from .const import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_MISTRAL_BASE_URL,
@@ -124,6 +125,12 @@ async def main() -> None:
     if args.sample_rate <= 0:
         parser.error("--sample-rate must be a positive integer")
 
+    if args.streaming_min_words is not None and args.streaming_min_words <= 0:
+        parser.error("--streaming-min-words must be a positive integer")
+
+    if args.streaming_max_chars is not None and args.streaming_max_chars <= 0:
+        parser.error("--streaming-max-chars must be a positive integer")
+
     try:
         configure_logging(args.log_level)
     except ValueError as exc:
@@ -153,7 +160,7 @@ async def main() -> None:
         if not args.disable_saved_voice_discovery:
             try:
                 saved_voices = await client.list_saved_voices(args.languages)
-            except Exception as exc:
+            except (MistralApiError, httpx.HTTPError, httpx.TimeoutException) as exc:
                 if reference_voices:
                     logger.warning(
                         (

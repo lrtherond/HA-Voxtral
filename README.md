@@ -167,6 +167,12 @@ uvx --from . wyoming-voxtral \
 - `--request-timeout`
   HTTP timeout for Mistral requests
 
+## Language Support
+
+Sentence segmentation uses [pySBD](https://github.com/nipunsadvilkar/pySBD). If the requested language is not supported by pySBD, the server falls back to English segmentation automatically and logs a warning. Synthesis itself is not affected — Voxtral handles the language independently.
+
+Supported pySBD languages include: `en`, `de`, `es`, `fr`, `it`, `ja`, `nl`, `pl`, `pt`, `ru`, `tr`, `zh`.
+
 ## How Audio Is Handled
 
 - Voxtral streaming is requested in `pcm`

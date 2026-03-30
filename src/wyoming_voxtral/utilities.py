@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import array
 import base64
 import logging
 import math
 import os
-import struct
+import sys
 from pathlib import Path
 
 from .const import SUPPORTED_REFERENCE_EXTENSIONS
@@ -114,22 +115,22 @@ def pcm_f32le_to_s16le(audio_bytes: bytes) -> bytes:
     if len(audio_bytes) % 4 != 0:
         raise ValueError("PCM float32 payload length must be a multiple of 4 bytes")
 
-    output = bytearray(len(audio_bytes) // 2)
-    offset = 0
+    samples: array.array[float] = array.array("f")
+    samples.frombytes(audio_bytes)
+    if sys.byteorder == "big":
+        samples.byteswap()  # input is little-endian; swap to native for iteration
 
-    for (sample,) in struct.iter_unpack("<f", audio_bytes):
-        if math.isnan(sample) or math.isinf(sample):
-            sample = 0.0
+    def _quantize(s: float) -> int:
+        if math.isnan(s) or math.isinf(s):
+            return 0
+        if s >= 1.0:
+            return 32767
+        if s <= -1.0:
+            return -32768
+        return int(s * 32767.0)
 
-        clamped = max(-1.0, min(1.0, sample))
-        if clamped >= 1.0:
-            quantized = 32767
-        elif clamped <= -1.0:
-            quantized = -32768
-        else:
-            quantized = int(clamped * 32767.0)
+    out: array.array[int] = array.array("h", (_quantize(s) for s in samples))
+    if sys.byteorder == "big":
+        out.byteswap()  # output must be little-endian
 
-        struct.pack_into("<h", output, offset, quantized)
-        offset += 2
-
-    return bytes(output)
+    return out.tobytes()

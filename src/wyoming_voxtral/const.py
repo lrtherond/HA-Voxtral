@@ -9,7 +9,7 @@ PACKAGE_NAME = "wyoming-voxtral"
 try:
     __version__ = importlib.metadata.version(PACKAGE_NAME)
 except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.1.0"
+    __version__ = "0.7.0"
 
 ATTRIBUTION_NAME = "Mistral Voxtral TTS"
 ATTRIBUTION_URL = "https://docs.mistral.ai/models/voxtral-tts-26-03"

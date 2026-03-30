@@ -108,7 +108,15 @@ class MistralTtsClient:
                 params={"limit": limit, "offset": offset},
             )
 
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise MistralApiError(f"Failed to parse voices response: {exc}") from exc
+            if not isinstance(payload, dict):
+                raise MistralApiError(
+                    "Unexpected voices response shape: expected object, "
+                    f"got {type(payload).__name__}"
+                )
             items = payload.get("items", [])
             if not isinstance(items, list):
                 raise MistralApiError("Unexpected voices response: 'items' was not a list")

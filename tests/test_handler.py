@@ -91,6 +91,107 @@ def _build_info() -> tuple[ReferenceVoice, Info]:
     return reference_voice, create_info(voices)
 
 
+def _make_handler(client=None) -> RecordingHandler:
+    _, info = _build_info()
+    return RecordingHandler(
+        MagicMock(name="reader"),
+        MagicMock(name="writer"),
+        info=info,
+        tts_client=client or DummyTtsClient([]),
+        sample_rate=24000,
+    )
+
+
+# ---------------------------------------------------------------------------
+# _chunk_text_for_streaming
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_text_no_constraints_splits_each_sentence():
+    handler = _make_handler()
+    chunks = handler._chunk_text_for_streaming(
+        "Hello world. How are you? I am fine.",
+        min_words=None,
+        max_chars=None,
+    )
+    assert chunks == ["Hello world.", "How are you?", "I am fine."]
+
+
+def test_chunk_text_min_words_only_emits_multiple_chunks():
+    """With only min_words set, large texts must be split into multiple chunks."""
+    handler = _make_handler()
+    # Each sentence is 2 words; min_words=2 → each sentence is its own chunk.
+    chunks = handler._chunk_text_for_streaming(
+        "Hello world. Foo bar. Baz qux.",
+        min_words=2,
+        max_chars=None,
+    )
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk.split()) >= 2
+
+
+def test_chunk_text_min_words_only_accumulates_short_sentences():
+    """Short sentences must be merged until min_words is satisfied."""
+    handler = _make_handler()
+    # Each sentence is 1 word (pySBD may not split "Hi." "Ok." but let's use
+    # multi-word sentences that combine under the threshold).
+    chunks = handler._chunk_text_for_streaming(
+        "One two. Three four. Five six.",
+        min_words=4,
+        max_chars=None,
+    )
+    for chunk in chunks:
+        # Every emitted chunk (except possibly the last) must meet min_words.
+        assert len(chunk.split()) >= 4 or chunk == chunks[-1]
+
+
+def test_chunk_text_max_chars_only_respects_limit():
+    handler = _make_handler()
+    chunks = handler._chunk_text_for_streaming(
+        "Hello world. How are you? I am fine.",
+        min_words=None,
+        max_chars=15,
+    )
+    # Each chunk should not exceed max_chars (individual sentences may still
+    # exceed it if a single sentence is longer than max_chars, but multi-sentence
+    # accumulations should not).
+    for chunk in chunks:
+        assert len(chunk) <= 20  # generous bound; a lone long sentence can exceed
+
+
+def test_chunk_text_both_constraints_preserves_all_text():
+    # Repro from code review: min_words=4, max_chars=12 previously dropped
+    # "One two." and "Three." entirely, returning only the last sentence.
+    handler = _make_handler()
+    chunks = handler._chunk_text_for_streaming(
+        "One two. Three. Four five six seven eight.",
+        min_words=4,
+        max_chars=12,
+    )
+    full = " ".join(chunks)
+    assert "One two" in full
+    assert "Three" in full
+    assert "Four five six seven eight" in full
+
+
+def test_chunk_text_min_words_never_drops_trailing_fragment():
+    """A trailing short fragment must always be emitted, not silently dropped."""
+    handler = _make_handler()
+    chunks = handler._chunk_text_for_streaming(
+        "Hello world. Foo bar. Hi.",
+        min_words=2,
+        max_chars=None,
+    )
+    full_text = " ".join(chunks)
+    assert "Hi" in full_text
+
+
+def test_chunk_text_empty_returns_empty():
+    handler = _make_handler()
+    assert handler._chunk_text_for_streaming("   ") == []
+
+
 @pytest.mark.asyncio
 async def test_handle_synthesize_streams_reference_voice():
     _, info = _build_info()

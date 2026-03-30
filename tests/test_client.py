@@ -44,6 +44,27 @@ def _make_done_event() -> bytes:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        (b"not-json", "Failed to parse voices response"),
+        (b"[]", "Unexpected voices response shape"),
+        (b'"a string"', "Unexpected voices response shape"),
+    ],
+)
+async def test_list_saved_voices_raises_mistral_api_error_on_bad_response(body, match):
+    """A 200 with invalid or wrong-shaped JSON must raise MistralApiError."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    client = MistralTtsClient(api_key="test-key", transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(MistralApiError, match=match):
+            await client.list_saved_voices(["en"])
+
+
+@pytest.mark.asyncio
 async def test_list_saved_voices_retries_on_rate_limit():
     sleeps: list[float] = []
     calls = 0
