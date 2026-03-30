@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import os
+import warnings
 from functools import partial
 from pathlib import Path
 
@@ -21,8 +22,13 @@ from .const import (
     DEFAULT_URI,
     __version__,
 )
-from .handler import VoxtralEventHandler
 from .utilities import configure_logging, env_flag, load_dotenv, load_reference_voices
+
+warnings.filterwarnings(
+    "ignore",
+    category=SyntaxWarning,
+    module=r"pysbd(\.|$)",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def main() -> None:
     """Run the Wyoming Voxtral server."""
+    from .handler import VoxtralEventHandler
+
     try:
         load_dotenv()
     except ValueError as exc:
