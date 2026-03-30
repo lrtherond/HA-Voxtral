@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wyoming-voxtral"
+version = "0.1.0"
+description = "Wyoming protocol server for Mistral Voxtral TTS"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "httpx>=0.28.1",
+    "pysbd>=0.3.4",
+    "wyoming>=1.8.0",
+]
+
+[project.scripts]
+wyoming-voxtral = "wyoming_voxtral.__main__:run"
+
+[dependency-groups]
+dev = [
+    "bandit[toml]",
+    "black",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "ty",
+]
+
+[tool.black]
+extend-exclude = "clones/"
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+extend-exclude = ["clones"]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "C4", "E", "F", "I", "N", "RET", "SIM", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["N802", "N803", "N806"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.terminal]
+error-on-warning = true
+output-format = "concise"
+
+[tool.bandit]
+exclude_dirs = ["tests", "clones"]
+skips = ["B101"]
