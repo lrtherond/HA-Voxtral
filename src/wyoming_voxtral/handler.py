@@ -31,7 +31,12 @@ from wyoming.tts import (
 )
 
 from .client import TtsStreamClient
-from .const import DEFAULT_AUDIO_CHANNELS, DEFAULT_AUDIO_WIDTH, TTS_CONCURRENT_REQUESTS
+from .const import (
+    DEFAULT_AUDIO_CHANNELS,
+    DEFAULT_AUDIO_WIDTH,
+    TTS_CONCURRENT_REQUESTS,
+    TTS_EMPTY_AUDIO_RETRY_ATTEMPTS,
+)
 from .models import VoxtralVoice
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +65,10 @@ class TtsStreamError(Exception):
         super().__init__(message)
         self.chunk_preview = chunk_preview
         self.voice = voice
+
+
+class EmptyTtsAudioError(TtsStreamError):
+    """Raised when Voxtral accepts a request but yields no audio."""
 
 
 class VoxtralEventHandler(AsyncEventHandler):
@@ -407,6 +416,14 @@ class VoxtralEventHandler(AsyncEventHandler):
 
             try:
                 result = await task
+            except EmptyTtsAudioError as err:
+                _LOGGER.warning(
+                    "Skipping sentence %d (%s) with voice %s after empty audio response",
+                    index + 1,
+                    err.chunk_preview,
+                    err.voice,
+                )
+                continue
             except TtsStreamError as err:
                 _LOGGER.error(
                     "Failed to synthesize sentence %d (%s) with voice %s: %s",
@@ -520,21 +537,35 @@ class VoxtralEventHandler(AsyncEventHandler):
                 return TtsStreamResult(streamed=True)
 
             chunks: list[bytes] = []
-            async with self._tts_semaphore:
-                async for chunk in self._tts_client.stream_speech(
-                    model=voice.model_name,
-                    text=text,
-                    voice_id=voice.voice_id,
-                    reference_audio_b64=voice.reference_audio_b64,
-                ):
-                    if chunk:
-                        chunks.append(chunk)
+            for attempt in range(TTS_EMPTY_AUDIO_RETRY_ATTEMPTS + 1):
+                chunks.clear()
+                async with self._tts_semaphore:
+                    async for chunk in self._tts_client.stream_speech(
+                        model=voice.model_name,
+                        text=text,
+                        voice_id=voice.voice_id,
+                        reference_audio_b64=voice.reference_audio_b64,
+                    ):
+                        if chunk:
+                            chunks.append(chunk)
 
-            audio_data = b"".join(chunks)
-            if not audio_data:
-                raise TtsStreamError("Voxtral returned empty audio", chunk_preview, voice.name)
+                audio_data = b"".join(chunks)
+                if audio_data:
+                    return TtsStreamResult(streamed=False, audio=audio_data)
 
-            return TtsStreamResult(streamed=False, audio=audio_data)
+                if attempt < TTS_EMPTY_AUDIO_RETRY_ATTEMPTS:
+                    _LOGGER.warning(
+                        "Retrying empty audio response for %s with voice %s (%d/%d)",
+                        chunk_preview,
+                        voice.name,
+                        attempt + 1,
+                        TTS_EMPTY_AUDIO_RETRY_ATTEMPTS,
+                    )
+                    continue
+
+                raise EmptyTtsAudioError("Voxtral returned empty audio", chunk_preview, voice.name)
+
+            raise AssertionError("Empty audio retry loop exited without returning or raising")
 
         except TtsStreamError:
             raise

@@ -16,7 +16,7 @@ from wyoming.tts import (
 )
 
 from wyoming_voxtral.catalog import create_info, create_tts_voices
-from wyoming_voxtral.handler import VoxtralEventHandler
+from wyoming_voxtral.handler import EmptyTtsAudioError, TtsStreamResult, VoxtralEventHandler
 from wyoming_voxtral.models import ReferenceVoice
 
 
@@ -28,6 +28,18 @@ class DummyTtsClient:
     async def stream_speech(self, **kwargs):
         self.calls.append(kwargs)
         for chunk in self._chunks:
+            yield chunk
+
+
+class SequencedTtsClient:
+    def __init__(self, responses: list[list[bytes]]) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._responses = responses
+
+    async def stream_speech(self, **kwargs):
+        self.calls.append(kwargs)
+        response_index = len(self.calls) - 1
+        for chunk in self._responses[response_index]:
             yield chunk
 
 
@@ -241,6 +253,60 @@ async def test_streaming_synthesis_sends_stop_event():
     events = handler.events
     assert events[-2].type == "audio-stop"
     assert events[-1].type == "synthesize-stopped"
+
+
+@pytest.mark.asyncio
+async def test_get_tts_audio_stream_retries_empty_audio_once():
+    client = SequencedTtsClient([[], [b"\x01\x00\x02\x00"]])
+    handler = _make_handler(client)
+    voice = handler._get_voice("Alice")
+
+    assert voice is not None
+    result = await handler._get_tts_audio_stream("Hello world.", voice)
+
+    assert result == TtsStreamResult(streamed=False, audio=b"\x01\x00\x02\x00")
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_tts_audio_stream_raises_after_empty_audio_retries_exhausted():
+    client = SequencedTtsClient([[], []])
+    handler = _make_handler(client)
+    voice = handler._get_voice("Alice")
+
+    assert voice is not None
+    with pytest.raises(EmptyTtsAudioError, match="Voxtral returned empty audio"):
+        await handler._get_tts_audio_stream("Hello world.", voice)
+
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_process_ready_sentences_skips_empty_audio_sentence():
+    class EmptySkippingHandler(RecordingHandler):
+        async def _get_tts_audio_stream(self, text, voice, task_id=None):
+            if text == "First sentence.":
+                return TtsStreamResult(streamed=False, audio=b"\x01\x00\x02\x00")
+
+            raise EmptyTtsAudioError("Voxtral returned empty audio", text, voice.name)
+
+    _, info = _build_info()
+    handler = EmptySkippingHandler(
+        MagicMock(name="reader"),
+        MagicMock(name="writer"),
+        info=info,
+        tts_client=DummyTtsClient([]),
+        sample_rate=24000,
+    )
+
+    assert await handler.handle_event(
+        SynthesizeStart(voice=SynthesizeVoice(name="Alice", language="en")).event()
+    )
+
+    result = await handler._process_ready_sentences(["First sentence.", "Second sentence."])
+
+    assert result is True
+    assert [event.type for event in handler.events] == ["audio-start", "audio-chunk"]
 
 
 @pytest.mark.asyncio
