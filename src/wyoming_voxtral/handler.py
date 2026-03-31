@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
-import pysbd
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*invalid escape sequence.*",
+        category=SyntaxWarning,
+    )
+    import pysbd
+
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.event import Event
 from wyoming.info import Describe, Info, TtsVoice
