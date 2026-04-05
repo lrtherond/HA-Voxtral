@@ -55,7 +55,6 @@ async def test_main_rejects_empty_voice_catalog(monkeypatch, capsys):
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_main_falls_back_to_reference_voices_when_discovery_raises_mistral_api_error(
     monkeypatch,
 ):
